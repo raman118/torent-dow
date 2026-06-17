@@ -17,7 +17,10 @@ def decode(data: bytes) -> Any:
             end = data.find(b"e", index)
             if end == -1:
                 raise ValueError("Invalid bencode integer: missing 'e'")
-            return int(data[index + 1 : end]), end + 1
+            int_str = data[index + 1 : end]
+            if int_str == b"-0" or (len(int_str) > 1 and int_str.startswith(b"0")):
+                raise ValueError("Invalid bencode integer: leading zeros or -0")
+            return int(int_str), end + 1
         elif char == b"l":
             # List: l<elements>e
             index += 1
@@ -43,6 +46,8 @@ def decode(data: bytes) -> Any:
             if colon == -1:
                 raise ValueError("Invalid bencode string: missing ':'")
             length = int(data[index:colon])
+            if length < 0:
+                raise ValueError("Bencode string length cannot be negative")
             start = colon + 1
             end = start + length
             return data[start:end], end
@@ -57,7 +62,9 @@ def encode(obj: Any) -> bytes:
     """
     Encodes a Python object into bencoded bytes.
     """
-    if isinstance(obj, int):
+    if isinstance(obj, bool):
+        raise TypeError("Object of type bool is not bencode serializable")
+    elif isinstance(obj, int):
         return b"i" + str(obj).encode() + b"e"
     elif isinstance(obj, bytes):
         return str(len(obj)).encode() + b":" + obj
