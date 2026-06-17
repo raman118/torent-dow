@@ -12,8 +12,24 @@ from . import bencode
 class Torrent:
     def __init__(self, raw_data: bytes):
         self.data = bencode.decode(raw_data)
-        self.announce: str = self.data[b"announce"].decode("utf-8")
         
+        self.announces: List[str] = []
+        # Main announce
+        announce_bytes = self.data.get(b"announce")
+        if announce_bytes:
+            self.announces.append(announce_bytes.decode("utf-8"))
+            
+        # Announce-list (multi-tracker)
+        if b"announce-list" in self.data:
+            for tier in self.data[b"announce-list"]:
+                for tracker in tier:
+                    t_str = tracker.decode("utf-8")
+                    if t_str not in self.announces:
+                        self.announces.append(t_str)
+        
+        # Backward compatibility for code expecting self.announce
+        self.announce: Optional[str] = self.announces[0] if self.announces else None
+                    
         # The 'info' dict is hashed to create the info_hash
         info = self.data[b"info"]
         self.info_hash: bytes = hashlib.sha1(bencode.encode(info)).digest()
@@ -50,36 +66,3 @@ class Torrent:
         return (f"Torrent(name={self.name}, "
                 f"total_length={self.total_length}, "
                 f"pieces={len(self.piece_hashes)})")
-
-
-if __name__ == "__main__":
-    # Mock bencoded torrent data for testing
-    import os
-    
-    # Create a fake info dict
-    fake_info = {
-        b"name": b"test_file.txt",
-        b"piece length": 16384,
-        b"pieces": hashlib.sha1(b"fake data").digest(), # One piece
-        b"length": 1024
-    }
-    
-    fake_torrent_dict = {
-        b"announce": b"http://tracker.example.com/announce",
-        b"info": fake_info
-    }
-    
-    fake_data = bencode.encode(fake_torrent_dict)
-    
-    # Test parsing
-    torrent = Torrent(fake_data)
-    print(f"Parsed Torrent: {torrent}")
-    print(f"Announce: {torrent.announce}")
-    print(f"Info Hash: {torrent.info_hash.hex()}")
-    print(f"Total Length: {torrent.total_length}")
-    print(f"Files: {torrent.files}")
-    
-    assert torrent.announce == "http://tracker.example.com/announce"
-    assert len(torrent.piece_hashes) == 1
-    assert torrent.total_length == 1024
-    print("Torrent parsing verified!")

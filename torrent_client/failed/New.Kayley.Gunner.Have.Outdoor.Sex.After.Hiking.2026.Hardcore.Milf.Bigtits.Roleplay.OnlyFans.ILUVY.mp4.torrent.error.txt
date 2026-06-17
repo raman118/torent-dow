@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "C:\Users\rcho3\Desktop\torent-dow\main.py", line 62, in main
+    asyncio.run(download_torrent(in_progress_path, "torrent_client/downloads", peer_id))
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rcho3\AppData\Local\Programs\Python\Python314\Lib\asyncio\runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\rcho3\AppData\Local\Programs\Python\Python314\Lib\asyncio\runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\rcho3\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\rcho3\Desktop\torent-dow\torrent_client\downloader.py", line 35, in download_torrent
+    raise RuntimeError("Trackers returned 0 peers. Cannot continue download.")
+RuntimeError: Trackers returned 0 peers. Cannot continue download.

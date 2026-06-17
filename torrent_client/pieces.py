@@ -7,7 +7,7 @@ import os
 import math
 import hashlib
 import asyncio
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 from .torrent import Torrent
 
 BLOCK_SIZE = 16384
@@ -65,11 +65,13 @@ class PieceManager:
 
         self.complete_pieces = 0
         self.total_pieces = len(self.pieces)
-        
-        # Initialize output files and mappings
-        self._init_files()
+        self.file_mappings = []
+        self.file_handles: Dict[str, any] = {}
 
-    def _init_files(self):
+    def init_files(self):
+        """
+        Pre-allocates files and opens persistent handles.
+        """
         self.file_mappings = []
         current_offset = 0
         for f in self.torrent.files:
@@ -77,16 +79,37 @@ class PieceManager:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             
             # Pre-allocate if necessary
-            if not os.path.exists(path) or os.path.getsize(path) != f["length"]:
+            if not os.path.exists(path):
                 with open(path, "wb") as fp:
                     fp.truncate(f["length"])
-                    
+            else:
+                current_size = os.path.getsize(path)
+                if current_size != f["length"]:
+                    with open(path, "a+b") as fp:
+                        fp.truncate(f["length"])
+            
+            # Open persistent handle in rb+ mode
+            handle = open(path, "rb+")
+            self.file_handles[path] = handle
+                        
             self.file_mappings.append({
                 "path": path,
                 "start": current_offset,
-                "end": current_offset + f["length"]
+                "end": current_offset + f["length"],
+                "handle": handle
             })
             current_offset += f["length"]
+
+    def close(self):
+        """
+        Closes all persistent file handles.
+        """
+        for handle in self.file_handles.values():
+            try:
+                handle.close()
+            except Exception:
+                pass
+        self.file_handles.clear()
 
     async def get_block_to_request(self, peer_bitfield: bytearray) -> Optional[Tuple[int, int, int]]:
         """
@@ -120,6 +143,7 @@ class PieceManager:
                 
             for block in piece.blocks:
                 if block.offset == offset:
+                    # Update status and copy data
                     block.status = "received"
                     piece.data[offset : offset + len(data)] = data
                     break
@@ -129,7 +153,7 @@ class PieceManager:
                 if hashlib.sha1(piece.data).digest() == piece.hash:
                     piece.is_complete = True
                     self.complete_pieces += 1
-                    self._write_piece(piece)
+                    await asyncio.get_running_loop().run_in_executor(None, self._write_piece, piece)
                     return True
                 else:
                     # Hash mismatch, reset blocks for re-download
@@ -153,7 +177,7 @@ class PieceManager:
 
     def _write_piece(self, piece: Piece):
         """
-        Writes a verified piece to the pre-allocated files.
+        Writes a verified piece using persistent handles.
         Handles boundary crosses for multi-file torrents.
         """
         global_offset = piece.index * self.torrent.piece_length
@@ -168,9 +192,10 @@ class PieceManager:
                     write_size = min(len(data_to_write) - bytes_written, f["end"] - current_offset)
                     file_offset = current_offset - f["start"]
                     
-                    with open(f["path"], "r+b") as fp:
-                        fp.seek(file_offset)
-                        fp.write(data_to_write[bytes_written : bytes_written + write_size])
+                    handle = f["handle"]
+                    handle.seek(file_offset)
+                    handle.write(data_to_write[bytes_written : bytes_written + write_size])
+                    handle.flush()
                         
                     bytes_written += write_size
                     break

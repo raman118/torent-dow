@@ -9,6 +9,7 @@ from typing import Optional, List, Tuple
 from .torrent import Torrent
 from .pieces import PieceManager
 
+MAX_PENDING_REQUESTS = 5
 
 class PeerConnection:
     """
@@ -87,6 +88,9 @@ class PeerConnection:
             if length == 0:
                 continue  # Keep-alive message
                 
+            if length > 10 * 1024 * 1024:
+                raise ValueError(f"Message length too large: {length}")
+                
             msg_id = (await self.reader.readexactly(1))[0]
             payload = await self.reader.readexactly(length - 1)
             
@@ -94,13 +98,14 @@ class PeerConnection:
                 self.choked = True
             elif msg_id == 1:  # Unchoke
                 self.choked = False
-                await self._request_piece()
+                await self._fill_pipeline()
             elif msg_id == 4:  # Have
                 piece_idx = struct.unpack(">I", payload)[0]
                 self._update_bitfield(piece_idx)
+                await self._fill_pipeline()
             elif msg_id == 5:  # Bitfield
                 self.bitfield = bytearray(payload)
-                await self._request_piece()
+                await self._fill_pipeline()
             elif msg_id == 7:  # Piece block received
                 index, begin = struct.unpack(">II", payload[:8])
                 block_data = payload[8:]
@@ -112,7 +117,8 @@ class PeerConnection:
                 ]
                 
                 await self.piece_manager.mark_block_received(index, begin, block_data)
-                await self._request_piece()
+                # Fire next request immediately to maintain pipeline
+                await self._fill_pipeline()
 
     def _update_bitfield(self, piece_idx: int):
         byte_idx = piece_idx // 8
@@ -121,15 +127,22 @@ class PeerConnection:
             self.bitfield.append(0)
         self.bitfield[byte_idx] |= (1 << (7 - bit_idx))
 
-    async def _request_piece(self):
+    async def _fill_pipeline(self):
         """
-        Request the next missing block from this peer if unchoked.
+        Request blocks until the pipeline is full.
         """
-        if self.choked or not self.bitfield:
+        if self.choked:
             return
             
-        request = await self.piece_manager.get_block_to_request(self.bitfield)
-        if request:
+        # Refill until we have MAX_PENDING_REQUESTS in-flight
+        while len(self.requested_blocks) < MAX_PENDING_REQUESTS:
+            if not self.bitfield:
+                break
+                
+            request = await self.piece_manager.get_block_to_request(self.bitfield)
+            if not request:
+                break
+                
             idx, begin, length = request
             self.requested_blocks.append(request)
             
